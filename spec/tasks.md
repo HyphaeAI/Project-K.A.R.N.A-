@@ -13,36 +13,36 @@ Everything related to the Python FastAPI server, GCP services, Docker, Cloud Run
 
 ## 1.1 Project Scaffolding
 
-- [ ] Create `backend/` directory with `requirements.txt`
-- [ ] Add dependencies: `fastapi`, `uvicorn`, `python-multipart`, `google-cloud-storage`, `google-cloud-speech`, `google-generativeai`, `pydantic`
-- [ ] Create `backend/app/` package structure: `__init__.py`, `main.py`, `models.py`, `session_store.py`, `media_processor.py`, `gemini_service.py`, `stt_service.py`, `gcs_service.py`
-- [ ] Create `backend/Dockerfile` with Python 3.11 + FFmpeg installed
-- [ ] Create `backend/.env.example` with placeholder GCP credentials and config vars
-- [ ] Create `backend/.dockerignore` (exclude `.env`, `__pycache__`, `.git`)
+- [x] Create `backend/` directory with `requirements.txt`
+- [x] Add dependencies: `fastapi`, `uvicorn`, `python-multipart`, `google-cloud-storage`, `google-cloud-speech`, `google-generativeai`, `pydantic`
+- [x] Create `backend/app/` package structure: `__init__.py`, `main.py`, `models.py`, `session_store.py`, `media_processor.py`, `gemini_service.py`, `stt_service.py`, `gcs_service.py`
+- [x] Create `backend/Dockerfile` with Python 3.11 + FFmpeg installed
+- [x] Create `backend/.env.example` with placeholder GCP credentials and config vars
+- [x] Create `backend/.dockerignore` (exclude `.env`, `__pycache__`, `.git`)
 - [ ] Verify FFmpeg is accessible in the Docker container (`ffmpeg -version`)
 
 ## 1.2 FastAPI Application Bootstrap
 
-- [ ] Create `backend/app/main.py` with FastAPI app instance
-- [ ] Configure CORS middleware (allow `http://localhost:5173` in dev, configurable for prod)
-- [ ] Add health check endpoint `GET /health` returning `{"status": "ok"}`
+- [x] Create `backend/app/main.py` with FastAPI app instance
+- [x] Configure CORS middleware (allow `http://localhost:5173` in dev, configurable for prod)
+- [x] Add health check endpoint `GET /health` returning `{"status": "ok"}`
 - [ ] Create startup/shutdown event handlers for logging
 
 ## 1.3 Data Models (Pydantic)
 
-- [ ] Create `backend/app/models.py` with all Pydantic models:
-  - [ ] `InitRequest`: `job_role: str` with validation against allowed roles
-  - [ ] `QuestionPayload`: `text: str`, `type: str`, `topic_area: str`
-  - [ ] `InitResponse`: `session_id`, `current_round`, `total_rounds`, `question: QuestionPayload`, `status`
-  - [ ] `OperationLog`: `op: str`, `gcs_path: str | None`, `duration_ms: int | None`
-  - [ ] `EvaluationResult`: `scores: dict`, `flags: dict`, `evaluator_notes: str`
-  - [ ] `NextAction`: `type: str`, `current_round: int`, `question: QuestionPayload | None`, `message: str | None`
-  - [ ] `ChunkResponse`: full `/process-chunk` response shape
-  - [ ] `ResultsResponse`: full `/results` response shape with `round_details`, `summary`, `video_vault_manifest`
+- [x] Create `backend/app/models.py` with all Pydantic models:
+  - [x] `InitRequest`: `job_role: str` with validation against allowed roles
+  - [x] `QuestionPayload`: `text: str`, `type: str`, `topic_area: str`
+  - [x] `InitResponse`: `session_id`, `current_round`, `total_rounds`, `question: QuestionPayload`, `status`
+  - [x] `OperationLog`: `op: str`, `gcs_path: str | None`, `duration_ms: int | None`
+  - [x] `EvaluationResult`: `scores: dict`, `flags: dict`, `evaluator_notes: str`
+  - [x] `NextAction`: `type: str`, `current_round: int`, `question: QuestionPayload | None`, `message: str | None`
+  - [x] `ChunkResponse`: full `/process-chunk` response shape
+  - [x] `ResultsResponse`: full `/results` response shape with `round_details`, `summary`, `video_vault_manifest`
 
 ## 1.4 Session Store (In-Memory)
 
-- [ ] Create `backend/app/session_store.py`
+- [x] Create `backend/app/session_store.py`
 - [ ] Implement `SessionState` dataclass (design §4.1)
 - [ ] Implement `RoundRecord` dataclass (design §4.2)
 - [ ] Implement `create_session(job_role) -> SessionState`
@@ -51,7 +51,7 @@ Everything related to the Python FastAPI server, GCP services, Docker, Cloud Run
 
 ## 1.5 Media Processing Pipeline (FFmpeg)
 
-- [ ] Create `backend/app/media_processor.py`
+- [x] Create `backend/app/media_processor.py`
 - [ ] Implement `save_temp_chunk(session_id, chunk_index, chunk_bytes) -> str` — saves WebM to `/tmp/{session_id}/chunk_{index}.webm`
 - [ ] Implement `extract_audio(webm_path) -> str` — FFmpeg: `-vn -acodec pcm_s16le -ar 16000 -ac 1`, returns WAV path
 - [ ] Implement `concatenate_audio_chunks(wav_paths) -> str` — concatenates WAV files, returns combined path
@@ -60,14 +60,14 @@ Everything related to the Python FastAPI server, GCP services, Docker, Cloud Run
 
 ## 1.6 Google Cloud Storage — Video Vault
 
-- [ ] Create `backend/app/gcs_service.py`
+- [x] Create `backend/app/gcs_service.py`
 - [ ] Implement `init_gcs_client()` with service account credentials
 - [ ] Implement `vault_video_chunk(session_id, chunk_index, webm_bytes) -> str` — uploads to `gs://karna-vault/{session_id}/chunk_{index}.webm`, returns GCS path
 - [ ] Enforce write-only behavior (no read/download methods exposed)
 
 ## 1.7 Google Cloud Speech-to-Text
 
-- [ ] Create `backend/app/stt_service.py`
+- [x] Create `backend/app/stt_service.py`
 - [ ] Implement `init_stt_client()` with credentials
 - [ ] Implement `transcribe_audio(wav_path) -> str` — sync `recognize` call (LINEAR16, 16kHz, en-US)
 - [ ] Handle empty transcript case (return `""` with warning log)
@@ -75,7 +75,7 @@ Everything related to the Python FastAPI server, GCP services, Docker, Cloud Run
 
 ## 1.8 API Endpoint: `POST /init`
 
-- [ ] Implement `/init` endpoint in `main.py`
+- [x] Implement `/init` endpoint in `main.py`
 - [ ] Validate `job_role` against: `["Backend Engineer", "Frontend Engineer", "ML Engineer", "DevOps Engineer", "Full Stack Engineer"]`
 - [ ] Create new session via `session_store.create_session()`
 - [ ] Call `gemini_service.generate_initial_question()` for round 1
@@ -85,7 +85,7 @@ Everything related to the Python FastAPI server, GCP services, Docker, Cloud Run
 
 ## 1.9 API Endpoint: `POST /process-chunk`
 
-- [ ] Implement `/process-chunk` endpoint accepting `multipart/form-data`
+- [x] Implement `/process-chunk` endpoint accepting `multipart/form-data`
 - [ ] Extract form fields: `session_id`, `chunk_index`, `media_chunk` (file), `is_final`
 - [ ] Validate `session_id` exists; return `404` if not found
 - [ ] Save chunk to temp file via `media_processor.save_temp_chunk()`
@@ -108,7 +108,7 @@ Everything related to the Python FastAPI server, GCP services, Docker, Cloud Run
 
 ## 1.10 API Endpoint: `GET /results/{session_id}`
 
-- [ ] Implement `/results/{session_id}` endpoint
+- [x] Implement `/results/{session_id}` endpoint
 - [ ] Validate session exists; return `404` if not
 - [ ] If session `status != "completed"`: return `409 Conflict` with progress info
 - [ ] Build and return full `ResultsResponse`:
