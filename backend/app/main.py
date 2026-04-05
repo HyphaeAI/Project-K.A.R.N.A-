@@ -223,7 +223,7 @@ async def process_chunk(
 
     # Determine next_action
     probe_needed: bool = eval_dict.get("probe_needed", False)
-    probe_question_dict: dict | None = eval_dict.get("probe_question")
+    probe_question_dict: Optional[dict] = eval_dict.get("probe_question")
 
     if probe_needed and probe_question_dict:
         # Follow-up probe — don't increment round

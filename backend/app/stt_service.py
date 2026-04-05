@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Optional
 
 from google.api_core import exceptions as gcp_exceptions
 from google.cloud import speech
@@ -9,7 +10,7 @@ from google.oauth2 import service_account
 
 logger = logging.getLogger(__name__)
 
-_client: speech.SpeechClient | None = None
+_client: Optional[speech.SpeechClient] = None
 
 
 def init_stt_client() -> speech.SpeechClient:

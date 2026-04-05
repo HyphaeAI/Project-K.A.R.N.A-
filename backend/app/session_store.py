@@ -4,7 +4,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -71,12 +71,12 @@ def create_session(job_role: str) -> SessionState:
     return session
 
 
-def get_session(session_id: str) -> SessionState | None:
+def get_session(session_id: str) -> Optional[SessionState]:
     """Return the session for *session_id*, or None if not found."""
     return _sessions.get(session_id)
 
 
-def update_session(session_id: str, **kwargs: Any) -> SessionState | None:
+def update_session(session_id: str, **kwargs: Any) -> Optional[SessionState]:
     """Update arbitrary fields on a session and return the updated object.
 
     Returns None if the session does not exist.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, field_validator
 
 # ---------------------------------------------------------------------------
@@ -28,11 +28,11 @@ class QuestionPayload(BaseModel):
 
 class OperationLog(BaseModel):
     op: str
-    gcs_path: str | None = None
-    duration_ms: int | None = None
-    word_count: int | None = None
-    latency_ms: int | None = None
-    reason: str | None = None
+    gcs_path: Optional[str] = None
+    duration_ms: Optional[int] = None
+    word_count: Optional[int] = None
+    latency_ms: Optional[int] = None
+    reason: Optional[str] = None
 
 
 class EvaluationScores(BaseModel):

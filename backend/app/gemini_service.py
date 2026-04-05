@@ -1,12 +1,12 @@
 """
-gemini_service.py — K.A.R.N.A. Gemini API integration.
+OpenRouter Service for K.A.R.N.A. — Uses Step 3.5 Flash via OpenRouter.
 
-Handles all interactions with the Google Generative AI (Gemini) API:
-  - Client initialisation (Task 2.1)
-  - System prompt constant (Task 2.2)
-  - Question generation (Task 2.3)
-  - Answer evaluation (Task 2.4)
-  - Final summary generation (Task 2.5)
+Handles all interactions with the OpenRouter API:
+  - Client initialization (uses OPENROUTER_API_KEY)
+  - System prompt (unchanged from original design)
+  - Question generation
+  - Answer evaluation
+  - Final summary generation
 """
 
 from __future__ import annotations
@@ -16,14 +16,15 @@ import json
 import logging
 import os
 import re
-from typing import Any
+import time
+from typing import Any, Optional
 
-import google.generativeai as genai
+import requests
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 2.2 — SYSTEM_PROMPT (design §6.1)
+# System Prompt (unchanged)
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT: str = (
@@ -33,12 +34,12 @@ SYSTEM_PROMPT: str = (
     "ABSOLUTE RULES:\n"
     "1. You will NEVER receive or consider any visual, demographic, or personal \n"
     "   information about the candidate. You evaluate ONLY the text transcript of \n"
-    "   their spoken answers.\n"
+    "their spoken answers.\n"
     "2. You must NEVER reference or infer the candidate's gender, age, race, \n"
     "   ethnicity, accent, educational background, or institutional affiliation.\n"
     "3. You evaluate answers solely on: logical coherence, depth of technical \n"
     "   understanding, problem-solving approach, communication clarity, and \n"
-    "   adaptability to edge cases.\n"
+    "adaptability to edge cases.\n"
     "4. You must NEVER produce a final score below 0 or above 100 for any dimension.\n"
     "5. All your outputs must be valid, parseable JSON. No markdown, no prose wrapping.\n"
     "\n"
@@ -68,44 +69,45 @@ SYSTEM_PROMPT: str = (
 )
 
 # ---------------------------------------------------------------------------
-# 2.1 — Gemini client singleton
+# Configuration
 # ---------------------------------------------------------------------------
 
-_model: genai.GenerativeModel | None = None
+OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+MODEL_NAME = "stepfun/step-3.5-flash"  # You can change to any OpenRouter model
+
+# ---------------------------------------------------------------------------
+# Client singleton (OpenRouter uses stateless HTTP, no client object needed)
+# ---------------------------------------------------------------------------
+
+_api_key: Optional[str] = None
 
 
-def init_gemini_client() -> genai.GenerativeModel:
-    """Initialise the Gemini client using GEMINI_API_KEY from the environment.
+def init_openrouter_client() -> str:
+    """Initialize OpenRouter configuration and return the API key.
 
-    Configures the ``google.generativeai`` SDK and returns a
-    :class:`genai.GenerativeModel` instance for ``gemini-2.0-flash`` with
-    :data:`SYSTEM_PROMPT` set as the system instruction.
+    Sets the OPENROUTER_API_KEY from environment. Raises ValueError if not set.
 
     Returns:
-        A configured :class:`genai.GenerativeModel` instance.
+        The OpenRouter API key string.
 
     Raises:
-        ValueError: If ``GEMINI_API_KEY`` is not set in the environment.
+        ValueError: If OPENROUTER_API_KEY is not set.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    global _api_key
+    api_key = os.environ.get("OPENROUTER_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY environment variable is not set.")
-
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        system_instruction=SYSTEM_PROMPT,
-    )
-    logger.info("Gemini client initialised with model gemini-2.0-flash.")
-    return model
+        raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
+    _api_key = api_key
+    logger.info("OpenRouter client initialized with model %s", MODEL_NAME)
+    return api_key
 
 
-def _get_model() -> genai.GenerativeModel:
-    """Return the module-level singleton model, initialising it on first call."""
-    global _model
-    if _model is None:
-        _model = init_gemini_client()
-    return _model
+def _get_api_key() -> str:
+    """Return the API key, initializing on first call."""
+    global _api_key
+    if _api_key is None:
+        _api_key = init_openrouter_client()
+    return _api_key
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -115,16 +117,7 @@ _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 def _strip_json_fences(text: str) -> str:
-    """Remove markdown code fences (```json ... ```) from *text*.
-
-    If no fences are found the original string is returned unchanged.
-
-    Args:
-        text: Raw text that may contain markdown code fences.
-
-    Returns:
-        The inner content of the first code fence, or *text* as-is.
-    """
+    """Remove markdown code fences from text."""
     match = _FENCE_RE.search(text)
     if match:
         return match.group(1)
@@ -136,19 +129,97 @@ _RETRY_SUFFIX = (
     "Return ONLY the raw JSON object, no markdown, no explanation."
 )
 
-_GENERATION_CONFIG = genai.types.GenerationConfig(
-    temperature=0.7,
-    candidate_count=1,
-)
+# Step 3.5 Flash config (OpenRouter)
+_GENERATION_CONFIG = {
+    "temperature": 0.7,
+    "max_tokens": 2000,
+}
 
-_REQUEST_OPTIONS = {"timeout": 10}
+# Retry backoff parameters
+_BASE_DELAY = 1  # seconds
+_MAX_DELAY = 16
+_MAX_RETRIES = 2
 
 
-def _call_with_retry(prompt: str, max_retries: int = 2) -> dict[str, Any]:
-    """Send *prompt* to Gemini and parse the JSON response, retrying on failure.
+def _call_openrouter(messages: list[dict[str, str]]) -> str:
+    """Call OpenRouter ChatCompletion API and return the assistant's content.
+
+    Retries on rate-limit errors (429) with exponential backoff.
 
     Args:
-        prompt: The full prompt string to send.
+        messages: List of chat messages (role + content)
+
+    Returns:
+        The assistant's response text.
+
+    Raises:
+        ValueError: If response is not valid after all retries.
+    """
+    api_key = _get_api_key()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        # Optional: Identify your app
+        "X-Title": "K.A.R.N.A. Interview Evaluator",
+    }
+    payload = {
+        "model": MODEL_NAME,
+        "messages": messages,
+        "temperature": _GENERATION_CONFIG["temperature"],
+        "max_tokens": _GENERATION_CONFIG["max_tokens"],
+    }
+
+    delay = _BASE_DELAY
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            response = requests.post(
+                OPENROUTER_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                # OpenAI format: choices[0].message.content
+                content = data["choices"][0]["message"]["content"]
+                return content
+            elif response.status_code == 429:
+                # Rate limited – retry after delay
+                if attempt < _MAX_RETRIES:
+                    logger.warning(
+                        "OpenRouter rate limited (429), retrying in %.1fs...",
+                        delay,
+                    )
+                    time.sleep(delay)
+                    delay = min(delay * 2, _MAX_DELAY)
+                    continue
+                else:
+                    raise ValueError("OpenRouter rate limit exceeded after retries")
+            else:
+                logger.error(
+                    "OpenRouter API error: %d %s",
+                    response.status_code,
+                    response.text[:200],
+                )
+                raise ValueError(f"OpenRouter API error {response.status_code}")
+
+        except requests.RequestException as exc:
+            logger.error("OpenRouter request failed: %s", exc)
+            if attempt < _MAX_RETRIES:
+                time.sleep(delay)
+                delay = min(delay * 2, _MAX_DELAY)
+                continue
+            raise ValueError(f"OpenRouter request failed: {exc}") from exc
+
+    raise ValueError("All retries exhausted")
+
+
+def _call_with_retry(prompt: str, system_prompt: str = SYSTEM_PROMPT, max_retries: int = 2) -> dict[str, Any]:
+    """Send prompt to OpenRouter and parse the JSON response, retrying on failure.
+
+    Args:
+        prompt: The full user prompt string.
+        system_prompt: System instruction (defaults to SYSTEM_PROMPT).
         max_retries: Maximum number of additional attempts after the first.
 
     Returns:
@@ -157,33 +228,40 @@ def _call_with_retry(prompt: str, max_retries: int = 2) -> dict[str, Any]:
     Raises:
         ValueError: If all attempts are exhausted without valid JSON.
     """
-    model = _get_model()
-    current_prompt = prompt
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+
+    current_prompt = prompt  # for suffix appending if needed
 
     for attempt in range(max_retries + 1):
         try:
-            response = model.generate_content(
-                current_prompt,
-                generation_config=_GENERATION_CONFIG,
-                request_options=_REQUEST_OPTIONS,
-            )
-            raw = response.text
+            raw = _call_openrouter(messages)
             cleaned = _strip_json_fences(raw)
             return json.loads(cleaned)
         except json.JSONDecodeError as exc:
             logger.warning(
-                "Gemini returned invalid JSON on attempt %d/%d: %s",
+                "OpenRouter returned invalid JSON on attempt %d/%d: %s",
                 attempt + 1,
                 max_retries + 1,
                 exc,
             )
             if attempt < max_retries:
-                current_prompt = current_prompt + _RETRY_SUFFIX
+                current_prompt = prompt + _RETRY_SUFFIX
+                messages[1]["content"] = current_prompt
             else:
-                raise ValueError("Gemini returned invalid JSON after retries") from exc
+                raise ValueError("OpenRouter returned invalid JSON after retries") from exc
+        except ValueError:
+            # Propagate errors from _call_openrouter
+            if attempt < max_retries:
+                current_prompt = prompt + _RETRY_SUFFIX
+                messages[1]["content"] = current_prompt
+            else:
+                raise
 
 # ---------------------------------------------------------------------------
-# 2.3 — Question generation (design §6.2)
+# Question generation (design §6.2)
 # ---------------------------------------------------------------------------
 
 def generate_initial_question(
@@ -195,22 +273,22 @@ def generate_initial_question(
 ) -> dict[str, Any]:
     """Generate the next interview question for the given round.
 
-    Builds the question-generation prompt from design §6.2, calls Gemini, and
-    returns the parsed JSON response.
+    Builds the question-generation prompt, calls OpenRouter, and returns
+    the parsed JSON response.
 
     Args:
         job_role: The role the candidate is being interviewed for.
         current_round: The current round number (1-indexed).
         total_rounds: Total number of rounds in the interview.
-        covered_topics: List of topic areas already covered in previous rounds.
-        transcript_history: List of previous Q&A records (dicts or dataclasses).
+        covered_topics: List of topic areas already covered.
+        transcript_history: List of previous Q&A records.
 
     Returns:
         A dict with keys: ``question_text``, ``topic_area``, ``question_type``,
         ``difficulty``.
 
     Raises:
-        ValueError: If Gemini returns invalid JSON after all retries.
+        ValueError: If OpenRouter returns invalid JSON after all retries.
     """
     history_serialisable = [
         dataclasses.asdict(r) if dataclasses.is_dataclass(r) else r
@@ -245,7 +323,7 @@ def generate_initial_question(
     missing = required - result.keys()
     if missing:
         raise ValueError(
-            f"Gemini question response missing required keys: {missing}"
+            f"OpenRouter question response missing required keys: {missing}"
         )
 
     logger.info(
@@ -257,7 +335,7 @@ def generate_initial_question(
     return result
 
 # ---------------------------------------------------------------------------
-# 2.4 — Answer evaluation (design §6.3)
+# Answer evaluation (design §6.3)
 # ---------------------------------------------------------------------------
 
 _VALID_ANSWER_QUALITIES = {"strong", "moderate", "weak", "memorized", "vague"}
@@ -288,18 +366,12 @@ _EVAL_FALLBACK: dict[str, Any] = {
 
 
 def _validate_evaluation(result: dict[str, Any]) -> dict[str, Any]:
-    """Validate and sanitise an evaluation response dict in-place.
+    """Validate and sanitize an evaluation response dict in-place.
 
     - Clamps all score values to [0, 100].
     - Defaults ``answer_quality`` to ``"moderate"`` if unrecognised.
-    - Sets ``probe_needed=False`` when ``probe_question`` is missing or lacks
+    - Sets ``probe_needed=False`` when probe_question is missing or lacks
       ``question_text``.
-
-    Args:
-        result: Parsed evaluation dict from Gemini.
-
-    Returns:
-        The sanitised dict (mutated in-place and returned).
     """
     scores = result.get("scores", {})
     for dim in _SCORE_DIMENSIONS:
@@ -337,10 +409,10 @@ def evaluate_answer(
     current_round: int,
     total_rounds: int,
 ) -> dict[str, Any]:
-    """Evaluate a candidate's answer using Gemini.
+    """Evaluate a candidate's answer using OpenRouter.
 
-    Builds the evaluation prompt from design §6.3, calls Gemini, validates the
-    response, and returns the sanitised evaluation dict.
+    Builds the evaluation prompt, calls OpenRouter, validates the response,
+    and returns the sanitized evaluation dict.
 
     Args:
         job_role: The role the candidate is being interviewed for.
@@ -352,7 +424,7 @@ def evaluate_answer(
 
     Returns:
         A dict with keys: ``scores``, ``flags``, ``evaluator_notes``,
-        ``probe_needed``, ``probe_question``.  Falls back to
+        ``probe_needed``, ``probe_question``. Falls back to
         :data:`_EVAL_FALLBACK` on total failure.
     """
     prompt = (
@@ -401,7 +473,7 @@ def evaluate_answer(
         return dict(_EVAL_FALLBACK)
 
 # ---------------------------------------------------------------------------
-# 2.5 — Final summary (design §6.4)
+# Final summary (design §6.4)
 # ---------------------------------------------------------------------------
 
 def generate_final_summary(
@@ -411,19 +483,18 @@ def generate_final_summary(
 ) -> dict[str, Any]:
     """Generate the final aggregated assessment for a completed interview.
 
-    Builds the summary prompt from design §6.4, calls Gemini, validates the
-    response, and returns the parsed summary dict.
+    Builds the summary prompt, calls OpenRouter, validates the response,
+    and returns the parsed summary dict.
 
     Args:
         job_role: The role the candidate was interviewed for.
-        full_transcript_history: List of :class:`RoundRecord` dataclass instances
+        full_transcript_history: List of RoundRecord dataclass instances
             (or plain dicts) representing the complete Q&A history.
-        all_round_scores: Cumulative per-skill scores dict accumulated during
-            the session.
+        all_round_scores: Cumulative per-skill scores dict.
 
     Returns:
         A dict with keys: ``overall_score``, ``recommendation``,
-        ``skill_scores``, ``flags``, ``summary``.  Falls back to a minimal
+        ``skill_scores``, ``flags``, ``summary``. Falls back to a minimal
         summary dict derived from *all_round_scores* on total failure.
     """
     history_serialisable = [
@@ -484,7 +555,7 @@ def generate_final_summary(
             else:
                 result["recommendation"] = "Weak"
             logger.warning(
-                "Invalid recommendation tier from Gemini — recomputed as %r.",
+                "Invalid recommendation tier from OpenRouter — recomputed as %r.",
                 result["recommendation"],
             )
 
